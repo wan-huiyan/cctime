@@ -1,0 +1,58 @@
+{
+  "name": "@dioptx/cctime",
+  "version": "1.0.0",
+  "description": "Real-time Claude Code session analytics — live dashboard, time breakdown, cost tracking",
+  "type": "module",
+  "bin": {
+    "cctime": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc && chmod 755 dist/index.js",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm test",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "time-tracking",
+    "session-analyzer",
+    "cost-tracking",
+    "live-dashboard",
+    "cli",
+    "analytics"
+  ],
+  "author": "dioptx",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dioptx/cctime.git"
+  },
+  "homepage": "https://github.com/dioptx/cctime",
+  "bugs": {
+    "url": "https://github.com/dioptx/cctime/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3",
+    "vitepress": "^1.6.4",
+    "vitest": "^4.0.18"
+  }
+}

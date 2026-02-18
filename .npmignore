@@ -1,0 +1,12 @@
+src/
+*.test.ts
+tsconfig.json
+vitest.config.ts
+.github/
+docs/
+assets/
+coverage/
+.DS_Store
+*.tsbuildinfo
+CONTRIBUTING.md
+SECURITY.md
