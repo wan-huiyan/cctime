@@ -284,7 +284,7 @@ function extractToolLatencies(messages: SessionMessage[]): ToolLatency[] {
         if (c.type === 'tool_result' && c.tool_use_id) {
           const start = toolStarts.get(c.tool_use_id);
           if (start) {
-            const duration = ts - start.ts;
+            const duration = Math.max(0, ts - start.ts);
             if (!toolDurations.has(start.name)) toolDurations.set(start.name, []);
             toolDurations.get(start.name)!.push(duration);
             toolStarts.delete(c.tool_use_id);
@@ -348,7 +348,7 @@ function extractTurnMetrics(messages: SessionMessage[]): TurnMetrics[] {
       turnIndex: turnIndex++,
       userTimestamp: userTs,
       assistantTimestamp: assistantTs,
-      responseMs: assistantTs - userTs,
+      responseMs: Math.max(0, assistantTs - userTs),
       inputTokens: usage?.input_tokens || 0,
       outputTokens: usage?.output_tokens || 0,
       cacheRead: usage?.cache_read_input_tokens || 0,

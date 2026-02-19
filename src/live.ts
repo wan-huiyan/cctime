@@ -88,8 +88,8 @@ export async function startLiveMode(projectFilter?: string): Promise<void> {
       const { messages: newMessages, bytesRead } = await parseSessionFrom(session.fullPath, byteOffset);
       if (newMessages.length > 0) {
         allMessages.push(...newMessages);
-        byteOffset = bytesRead;
       }
+      byteOffset = bytesRead;
 
       const analysis = analyzeSession(session.sessionId, allMessages);
 
@@ -110,27 +110,26 @@ export async function startLiveMode(projectFilter?: string): Promise<void> {
   await refresh();
 
   // Watch for changes
-  watcher = watch(session.fullPath, () => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(refresh, DEBOUNCE_MS);
-  });
-
-  watcher.on('error', async () => {
-    // File may have been deleted — try to find new active session
-    if (watcher) { watcher.close(); watcher = null; }
-    const newSession = await findActiveSession(projectFilter);
-    if (newSession) {
-      session.fullPath = newSession.fullPath;
-      session.sessionId = newSession.sessionId;
-      allMessages = [];
-      byteOffset = 0;
-      watcher = watch(session.fullPath, () => {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(refresh, DEBOUNCE_MS);
-      });
-      await refresh();
-    }
-  });
+  function attachWatcher() {
+    watcher = watch(session.fullPath, () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(refresh, DEBOUNCE_MS);
+    });
+    watcher.on('error', async () => {
+      // File may have been deleted — try to find new active session
+      if (watcher) { watcher.close(); watcher = null; }
+      const newSession = await findActiveSession(projectFilter);
+      if (newSession) {
+        session.fullPath = newSession.fullPath;
+        session.sessionId = newSession.sessionId;
+        allMessages = [];
+        byteOffset = 0;
+        attachWatcher();
+        await refresh();
+      }
+    });
+  }
+  attachWatcher();
 
   // Periodic refresh for wall-clock staleness (e.g., humanWait timer)
   const periodicTimer = setInterval(refresh, 5000);

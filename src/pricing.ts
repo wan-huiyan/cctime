@@ -23,9 +23,13 @@ function resolveModel(model: string): ModelPricing {
 
 export function estimateCost(model: string, usage: TokenUsage): number {
   const p = resolveModel(model);
-  const inputCost = (usage.input_tokens / 1_000_000) * p.inputPerM;
-  const outputCost = (usage.output_tokens / 1_000_000) * p.outputPerM;
-  const cacheReadCost = (usage.cache_read_input_tokens / 1_000_000) * p.inputPerM * p.cacheReadMultiplier;
-  const cacheCreateCost = (usage.cache_creation_input_tokens / 1_000_000) * p.inputPerM * p.cacheCreationMultiplier;
+  const input = usage.input_tokens || 0;
+  const output = usage.output_tokens || 0;
+  const cacheRead = usage.cache_read_input_tokens || 0;
+  const cacheCreate = usage.cache_creation_input_tokens || 0;
+  const inputCost = (input / 1_000_000) * p.inputPerM;
+  const outputCost = (output / 1_000_000) * p.outputPerM;
+  const cacheReadCost = (cacheRead / 1_000_000) * p.inputPerM * p.cacheReadMultiplier;
+  const cacheCreateCost = (cacheCreate / 1_000_000) * p.inputPerM * p.cacheCreationMultiplier;
   return inputCost + outputCost + cacheReadCost + cacheCreateCost;
 }

@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { SessionAnalysis, EnhancedStats, ToolLatency } from './types.js';
+import type { SessionAnalysis, EnhancedStats, AggregateJson } from './types.js';
 
 const BAR_WIDTH = 20;
 
@@ -34,7 +34,7 @@ function formatDuration(ms: number): string {
     return sec > 0 ? `${min}m ${sec}s` : `${min}m`;
   }
   const hours = Math.floor(totalSec / 3600);
-  const mins = Math.round((totalSec % 3600) / 60);
+  const mins = Math.floor((totalSec % 3600) / 60);
   return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
 }
 
@@ -70,7 +70,8 @@ function truncName(name: string, maxLen: number = 12): string {
 }
 
 function renderBar(fraction: number, color: (s: string) => string): string {
-  const filled = Math.round(fraction * BAR_WIDTH);
+  const clamped = Math.max(0, Math.min(1, fraction));
+  const filled = Math.round(clamped * BAR_WIDTH);
   const empty = BAR_WIDTH - filled;
   return color('\u2588'.repeat(filled)) + chalk.gray('\u2591'.repeat(empty));
 }
@@ -92,7 +93,8 @@ function renderSparkline(values: number[]): string {
 function renderCacheBar(rate: number): string {
   const chars = '\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588';
   const barLen = 10;
-  const filled = Math.round(rate * barLen);
+  const clamped = Math.max(0, Math.min(1, rate));
+  const filled = Math.round(clamped * barLen);
   return Array.from({ length: barLen }, (_, i) => {
     const level = i < filled ? Math.min(Math.floor((i / barLen) * chars.length) + 2, chars.length - 1) : 0;
     return chars[level];
@@ -111,7 +113,7 @@ function displaySummary(summary: string, startTime: number): string {
     const ampm = d.getHours() >= 12 ? 'pm' : 'am';
     return `${month} ${day}, ${hours}:${mins}${ampm} session`;
   }
-  return trimmed.slice(0, 42);
+  return trimmed.length > 42 ? trimmed.slice(0, 41) + '\u2026' : trimmed;
 }
 
 function hr(label: string, width: number = 56): string {
@@ -125,7 +127,7 @@ function hr(label: string, width: number = 56): string {
 export function formatSession(analysis: SessionAnalysis): string {
   const lines: string[] = [];
   const { enhancedStats, durationMs } = analysis;
-  const activeMs = durationMs - enhancedStats.humanAway;
+  const activeMs = Math.max(0, durationMs - enhancedStats.humanAway);
 
   // Header
   lines.push('');
@@ -157,7 +159,6 @@ export function formatSession(analysis: SessionAnalysis): string {
   const totalTok = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheCreation;
   if (totalTok > 0) {
     const inFrac = (tokens.input + tokens.cacheRead + tokens.cacheCreation) / totalTok;
-    const outFrac = tokens.output / totalTok;
     const inBar = Math.round(inFrac * BAR_WIDTH);
     const outBar = BAR_WIDTH - inBar;
     lines.push(` Tokens  ${chalk.cyan('\u2588'.repeat(inBar))}${chalk.green('\u2588'.repeat(outBar))}  ${chalk.cyan(formatTokens(tokens.input + tokens.cacheRead + tokens.cacheCreation) + ' in')} ${chalk.green(formatTokens(tokens.output) + ' out')}`);
@@ -219,7 +220,7 @@ export function formatSession(analysis: SessionAnalysis): string {
 export function formatSessionLive(analysis: SessionAnalysis): string {
   const lines: string[] = [];
   const { enhancedStats, durationMs } = analysis;
-  const activeMs = durationMs - enhancedStats.humanAway;
+  const activeMs = Math.max(0, durationMs - enhancedStats.humanAway);
 
   // Header with LIVE badge
   lines.push('');
@@ -326,7 +327,7 @@ export function formatAggregate(analyses: SessionAnalysis[], label: string): str
     }
   }
 
-  const totalActive = totalDuration - totalEnhanced.humanAway;
+  const totalActive = Math.max(0, totalDuration - totalEnhanced.humanAway);
 
   // Time breakdown
   lines.push('');
@@ -356,7 +357,8 @@ export function formatAggregate(analyses: SessionAnalysis[], label: string): str
     const outBar = BAR_WIDTH - inBar;
     lines.push(` Tokens  ${chalk.cyan('\u2588'.repeat(inBar))}${chalk.green('\u2588'.repeat(outBar))}  ${chalk.cyan(formatTokens(totalTokensIn) + ' in')} ${chalk.green(formatTokens(totalTokensOut) + ' out')}`);
   }
-  lines.push(` Cost    ~${formatCost(totalCost)}  (${analyses.length} sessions)`);
+  const avgCost = analyses.length > 0 ? totalCost / analyses.length : 0;
+  lines.push(` Cost    ~${formatCost(totalCost)}  (${analyses.length} sessions, avg ${formatCost(avgCost)}/session)`);
 
   // Models (with bars)
   const modelEntries = Object.entries(allModels).sort((a, b) => b[1] - a[1]);
@@ -396,7 +398,7 @@ export function formatAggregate(analyses: SessionAnalysis[], label: string): str
   const hourlyMs = new Array(24).fill(0);
   for (const a of analyses) {
     const startHour = new Date(a.startTime).getHours();
-    const activeMs = a.durationMs - a.enhancedStats.humanAway;
+    const activeMs = Math.max(0, a.durationMs - a.enhancedStats.humanAway);
     hourlyMs[startHour] += activeMs;
   }
   const maxHourMs = Math.max(...hourlyMs, 1);
@@ -416,7 +418,7 @@ export function formatAggregate(analyses: SessionAnalysis[], label: string): str
     const d = new Date(a.startTime);
     const key = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
     const existing = dayBuckets.get(key) || { active: 0, cost: 0, sessions: 0, turns: 0 };
-    existing.active += a.durationMs - a.enhancedStats.humanAway;
+    existing.active += Math.max(0, a.durationMs - a.enhancedStats.humanAway);
     existing.cost += a.estimatedCostUsd;
     existing.sessions += 1;
     existing.turns += a.turnCount;
@@ -452,13 +454,21 @@ export function formatCompact(analyses: SessionAnalysis[]): string {
   const lines: string[] = [];
   lines.push(chalk.gray(' Time              Duration    Cost   Turns  Summary'));
   lines.push(chalk.gray(' ' + '\u2500'.repeat(70)));
+  let totalActive = 0, totalCost = 0, totalTurns = 0;
   for (const a of analyses) {
     const time = formatTime(a.startTime);
     const activeMs = Math.max(0, a.durationMs - a.enhancedStats.humanAway);
     const dur = formatDuration(activeMs);
     const cost = formatCost(a.estimatedCostUsd);
-    const summary = displaySummary(a.summary, a.startTime).slice(0, 32);
+    const summary = displaySummary(a.summary, a.startTime);
     lines.push(` ${time.padEnd(18)}${dur.padEnd(12)}${cost.padEnd(7)}${String(a.turnCount).padStart(5)}  ${summary}`);
+    totalActive += activeMs;
+    totalCost += a.estimatedCostUsd;
+    totalTurns += a.turnCount;
+  }
+  if (analyses.length > 1) {
+    lines.push(chalk.gray(' ' + '\u2500'.repeat(70)));
+    lines.push(chalk.bold(` ${'Total'.padEnd(18)}${formatDuration(totalActive).padEnd(12)}${formatCost(totalCost).padEnd(7)}${String(totalTurns).padStart(5)}  ${analyses.length} sessions`));
   }
   return lines.join('\n');
 }
@@ -476,8 +486,8 @@ export function formatCsv(analyses: SessionAnalysis[]): string {
     const cost = a.estimatedCostUsd.toFixed(4);
     const tokIn = a.tokens.input + a.tokens.cacheRead + a.tokens.cacheCreation;
     const tokOut = a.tokens.output;
-    const model = Object.entries(a.models).sort((x, y) => y[1] - x[1])[0]?.[0] || 'unknown';
-    const summary = a.summary.replace(/"/g, '""');
+    const model = Object.entries(a.models).sort((x, y) => y[1] - x[1])[0]?.[0] || '-';
+    const summary = a.summary.replace(/[\r\n]+/g, ' ').replace(/"/g, '""');
     lines.push(`${ts},${durMin},${activeMin},${cost},${tokIn},${tokOut},${a.turnCount},${model},"${summary}"`);
   }
   return lines.join('\n');
@@ -497,7 +507,7 @@ export function formatMarkdown(analyses: SessionAnalysis[]): string {
     const tokIn = formatTokens(a.tokens.input + a.tokens.cacheRead + a.tokens.cacheCreation);
     const tokOut = formatTokens(a.tokens.output);
     const model = Object.entries(a.models).sort((x, y) => y[1] - x[1])[0]?.[0] || '-';
-    const summary = a.summary.slice(0, 40).replace(/\|/g, '\\|');
+    const summary = displaySummary(a.summary, a.startTime).replace(/\|/g, '\\|');
     lines.push(`| ${time} | ${dur} | ${cost} | ${a.turnCount} | ${tokIn} | ${tokOut} | ${model} | ${summary} |`);
   }
   return lines.join('\n');
@@ -505,7 +515,7 @@ export function formatMarkdown(analyses: SessionAnalysis[]): string {
 
 // ── JSON aggregate envelope ──
 
-export function formatJsonAggregate(analyses: SessionAnalysis[]): object {
+export function formatJsonAggregate(analyses: SessionAnalysis[]): AggregateJson {
   let totalCost = 0;
   let totalActive = 0;
   let totalDuration = 0;

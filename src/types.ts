@@ -134,3 +134,16 @@ export interface SessionIndex {
   version: number;
   entries: SessionIndexEntry[];
 }
+
+export interface AggregateJson {
+  summary: {
+    sessionCount: number;
+    totalCostUsd: number;
+    totalActiveMs: number;
+    totalDurationMs: number;
+    totalTokensIn: number;
+    totalTokensOut: number;
+    totalTurns: number;
+  };
+  sessions: SessionAnalysis[];
+}

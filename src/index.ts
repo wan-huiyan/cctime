@@ -54,7 +54,9 @@ function sortAnalyses(analyses: SessionAnalysis[], field: SortField): SessionAna
   const sorted = [...analyses];
   switch (field) {
     case 'cost': return sorted.sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd);
-    case 'duration': return sorted.sort((a, b) => b.durationMs - a.durationMs);
+    case 'duration': return sorted.sort((a, b) =>
+      Math.max(0, b.durationMs - b.enhancedStats.humanAway) -
+      Math.max(0, a.durationMs - a.enhancedStats.humanAway));
     case 'tokens': return sorted.sort((a, b) =>
       (b.tokens.input + b.tokens.output + b.tokens.cacheRead + b.tokens.cacheCreation) -
       (a.tokens.input + a.tokens.output + a.tokens.cacheRead + a.tokens.cacheCreation));
@@ -137,6 +139,10 @@ program
   .option('--no-color', 'Disable color output')
   .option('--color', 'Force color output')
   .action(async (opts) => {
+    // Wire color flags to env vars for chalk
+    if (opts.color === false) process.env.NO_COLOR = '1';
+    if (opts.color === true) process.env.FORCE_COLOR = '1';
+
     try {
       // Live mode
       if (opts.live) {
@@ -153,7 +159,9 @@ program
           process.exit(1);
         }
         const analysis = await analyzeEntry(entry);
-        if (opts.json) {
+        if (opts.csv || opts.compact || opts.markdown) {
+          outputAnalyses([analysis], 'Session', opts);
+        } else if (opts.json) {
           console.log(JSON.stringify(analysis, null, 2));
         } else {
           console.log(formatSession(analysis));
@@ -186,7 +194,9 @@ program
           process.exit(1);
         }
         const analysis = await analyzeEntry(entry);
-        if (opts.json) {
+        if (opts.csv || opts.compact || opts.markdown) {
+          outputAnalyses([analysis], 'Session', opts);
+        } else if (opts.json) {
           console.log(JSON.stringify(analysis, null, 2));
         } else {
           console.log(formatSession(analysis));

@@ -282,8 +282,8 @@ describe('formatter: compact', () => {
     const sessions = [makeAnalysis(), makeAnalysis({ summary: 'Second session' })];
     const output = strip(formatCompact(sessions));
     const lines = output.split('\n').filter(l => l.trim());
-    // Header + separator + 2 data rows
-    expect(lines.length).toBe(4);
+    // Header + separator + 2 data rows + separator + totals
+    expect(lines.length).toBe(6);
   });
 
   it('should show header row with column names', () => {
