@@ -1,7 +1,7 @@
 import type {
   SessionMessage, SessionAnalysis, TimeSegment, PhaseType, PhaseStats,
   EnhancedTimeSegment, EnhancedPhaseType, EnhancedStats, ToolLatency, TurnMetrics,
-  MessageContent,
+  MessageContent, StuckLoop, WarmupCost,
 } from './types.js';
 import { estimateCost } from './pricing.js';
 
@@ -45,6 +45,9 @@ export function analyzeSession(sessionId: string, messages: SessionMessage[]): S
   const activeMs = Math.max(0, durationMs - enhancedStats.humanAway);
   const costPerMinuteUsd = activeMs > 0 ? totalCost / (activeMs / 60000) : 0;
 
+  const stuckLoops = extractStuckLoops(mainMessages);
+  const warmupCost = extractWarmupCost(allAssistant);
+
   return {
     sessionId,
     summary,
@@ -66,6 +69,8 @@ export function analyzeSession(sessionId: string, messages: SessionMessage[]): S
     estimatedCostUsd: totalCost,
     costPerMinuteUsd,
     contextTrend,
+    stuckLoops,
+    warmupCost,
   };
 }
 
@@ -386,6 +391,122 @@ function computeSessionCost(assistantMessages: SessionMessage[]): number {
   return total;
 }
 
+// ── Stuck loop detection ──
+
+function extractStuckLoops(messages: SessionMessage[]): StuckLoop[] {
+  // Build ordered list of tool calls with error status
+  interface ToolCall {
+    toolName: string;
+    startTs: number;
+    endTs: number;
+    isError: boolean;
+  }
+
+  const toolStarts = new Map<string, { name: string; ts: number }>();
+  const calls: ToolCall[] = [];
+
+  for (const msg of messages) {
+    const ts = Date.parse(msg.timestamp);
+    if (isNaN(ts)) continue;
+
+    if (msg.type === 'assistant') {
+      for (const c of getContentArray(msg)) {
+        if (c.type === 'tool_use' && c.id && c.name) {
+          toolStarts.set(c.id, { name: c.name, ts });
+        }
+      }
+    }
+
+    if (msg.type === 'user') {
+      for (const c of getContentArray(msg)) {
+        if (c.type === 'tool_result' && c.tool_use_id) {
+          const start = toolStarts.get(c.tool_use_id);
+          if (start) {
+            calls.push({
+              toolName: start.name,
+              startTs: start.ts,
+              endTs: ts,
+              isError: c.is_error === true,
+            });
+            toolStarts.delete(c.tool_use_id);
+          }
+        }
+      }
+    }
+  }
+
+  // Walk calls and detect consecutive chains of same tool with errors
+  const loops: StuckLoop[] = [];
+  let chainStart = 0;
+
+  while (chainStart < calls.length) {
+    const toolName = calls[chainStart].toolName;
+    let chainEnd = chainStart;
+
+    // Extend chain while same tool and prior calls errored
+    while (chainEnd + 1 < calls.length
+      && calls[chainEnd + 1].toolName === toolName
+      && calls[chainEnd].isError) {
+      chainEnd++;
+    }
+
+    // Count failures in this chain
+    const chainCalls = calls.slice(chainStart, chainEnd + 1);
+    const failures = chainCalls.filter(c => c.isError).length;
+
+    if (failures >= 2) {
+      loops.push({
+        toolName,
+        attempts: chainCalls.length,
+        failures,
+        durationMs: chainCalls[chainCalls.length - 1].endTs - chainCalls[0].startTs,
+        startTime: chainCalls[0].startTs,
+        endTime: chainCalls[chainCalls.length - 1].endTs,
+        resolved: !chainCalls[chainCalls.length - 1].isError,
+      });
+    }
+
+    chainStart = chainEnd + 1;
+  }
+
+  return loops;
+}
+
+// ── Warmup cost extraction ──
+
+function extractWarmupCost(assistantMessages: SessionMessage[]): WarmupCost {
+  if (assistantMessages.length === 0) {
+    return { warmupCostUsd: 0, steadyAvgCostUsd: 0, warmupCacheCreation: 0, turnCount: 0 };
+  }
+
+  const costs: number[] = [];
+  for (const msg of assistantMessages) {
+    const usage = msg.message?.usage;
+    const model = msg.message?.model;
+    if (!usage) continue;
+    costs.push(estimateCost(model || 'sonnet', usage));
+  }
+
+  if (costs.length === 0) {
+    return { warmupCostUsd: 0, steadyAvgCostUsd: 0, warmupCacheCreation: 0, turnCount: 0 };
+  }
+
+  const warmupCostUsd = costs[0];
+  const steadyAvgCostUsd = costs.length > 1
+    ? costs.slice(1).reduce((s, c) => s + c, 0) / (costs.length - 1)
+    : 0;
+
+  const firstUsage = assistantMessages.find(m => m.message?.usage)?.message?.usage;
+  const warmupCacheCreation = firstUsage?.cache_creation_input_tokens || 0;
+
+  return {
+    warmupCostUsd,
+    steadyAvgCostUsd,
+    warmupCacheCreation,
+    turnCount: costs.length,
+  };
+}
+
 // ── Shared helpers ──
 
 function extractSummary(messages: SessionMessage[]): string {
@@ -492,5 +613,7 @@ function emptyAnalysis(sessionId: string): SessionAnalysis {
     estimatedCostUsd: 0,
     costPerMinuteUsd: 0,
     contextTrend: [],
+    stuckLoops: [],
+    warmupCost: { warmupCostUsd: 0, steadyAvgCostUsd: 0, warmupCacheCreation: 0, turnCount: 0 },
   };
 }

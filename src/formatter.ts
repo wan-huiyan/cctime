@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { SessionAnalysis, EnhancedStats, AggregateJson } from './types.js';
+import type { SessionAnalysis, EnhancedStats, AggregateJson, StuckLoop, WarmupCost } from './types.js';
 
 const BAR_WIDTH = 20;
 
@@ -211,6 +211,14 @@ export function formatSession(analysis: SessionAnalysis): string {
   const sparkline = renderSparkline(analysis.contextTrend);
   lines.push(` Context: ${sparkline}`);
 
+  // Insights section
+  const insightLines = formatInsights(analysis.stuckLoops, analysis.warmupCost);
+  if (insightLines.length > 0) {
+    lines.push('');
+    lines.push(hr('Insights'));
+    lines.push(...insightLines);
+  }
+
   lines.push('');
   return lines.join('\n');
 }
@@ -272,6 +280,13 @@ export function formatSessionLive(analysis: SessionAnalysis): string {
       const latency = analysis.toolLatencies.find(t => t.name === name);
       const latStr = latency ? chalk.gray(` avg ${formatLatency(latency.avgMs)}`) : '';
       lines.push(` ${truncName(name)} ${bar} ${String(count).padStart(4)} calls${latStr}`);
+    }
+  }
+
+  // Stuck indicator (live mode — one line per active/recent loop)
+  if (analysis.stuckLoops && analysis.stuckLoops.length > 0) {
+    for (const loop of analysis.stuckLoops) {
+      lines.push(` ${chalk.yellow('\u26a0')} ${chalk.yellow(loop.toolName)} stuck (${loop.attempts} retries, ${formatDuration(loop.durationMs)})`);
     }
   }
 
@@ -444,6 +459,14 @@ export function formatAggregate(analyses: SessionAnalysis[], label: string): str
     }
   }
 
+  // Aggregate insights
+  const aggInsightLines = formatAggregateInsights(analyses);
+  if (aggInsightLines.length > 0) {
+    lines.push('');
+    lines.push(hr('Insights'));
+    lines.push(...aggInsightLines);
+  }
+
   lines.push('');
   return lines.join('\n');
 }
@@ -532,6 +555,23 @@ export function formatJsonAggregate(analyses: SessionAnalysis[]): AggregateJson 
     totalTurns += a.turnCount;
   }
 
+  // Compute aggregate insight fields
+  let warmupOverheadUsd = 0;
+  let stuckLoopSessions = 0;
+  let stuckLoopTotal = 0;
+  let stuckLoopRetries = 0;
+
+  for (const a of analyses) {
+    if (a.warmupCost && a.warmupCost.turnCount > 1) {
+      warmupOverheadUsd += a.warmupCost.warmupCostUsd - a.warmupCost.steadyAvgCostUsd;
+    }
+    if (a.stuckLoops && a.stuckLoops.length > 0) {
+      stuckLoopSessions++;
+      stuckLoopTotal += a.stuckLoops.length;
+      stuckLoopRetries += a.stuckLoops.reduce((s, l) => s + l.attempts, 0);
+    }
+  }
+
   return {
     summary: {
       sessionCount: analyses.length,
@@ -541,7 +581,72 @@ export function formatJsonAggregate(analyses: SessionAnalysis[]): AggregateJson 
       totalTokensIn,
       totalTokensOut,
       totalTurns,
+      warmupOverheadUsd: Math.round(warmupOverheadUsd * 100) / 100,
+      stuckLoopSessions,
+      stuckLoopTotal,
+      stuckLoopAvgRetries: stuckLoopTotal > 0 ? Math.round((stuckLoopRetries / stuckLoopTotal) * 10) / 10 : 0,
     },
     sessions: analyses,
   };
+}
+
+// ── Insight helpers ──
+
+function formatInsights(stuckLoops: StuckLoop[], warmupCost: WarmupCost): string[] {
+  const lines: string[] = [];
+
+  // Stuck loop warnings
+  if (stuckLoops && stuckLoops.length > 0) {
+    for (const loop of stuckLoops) {
+      const status = loop.resolved ? 'resolved' : 'unresolved';
+      lines.push(` ${chalk.yellow('\u26a0')} Stuck: ${loop.toolName} \u2014 ${loop.attempts} retries over ${formatDuration(loop.durationMs)} (${status})`);
+    }
+  }
+
+  // Warmup cost (only show if > 1 turn and warmup is > 2x steady)
+  if (warmupCost && warmupCost.turnCount > 1 && warmupCost.steadyAvgCostUsd > 0
+    && warmupCost.warmupCostUsd > warmupCost.steadyAvgCostUsd * 2) {
+    lines.push(` Warmup: ${formatCost(warmupCost.warmupCostUsd)} (turn 1)  \u2192  Steady: avg ${formatCost(warmupCost.steadyAvgCostUsd)}/turn`);
+  }
+
+  return lines;
+}
+
+function formatAggregateInsights(analyses: SessionAnalysis[]): string[] {
+  const lines: string[] = [];
+
+  // Warmup overhead across sessions
+  let warmupOverhead = 0;
+  let warmupSessions = 0;
+  for (const a of analyses) {
+    if (a.warmupCost && a.warmupCost.turnCount > 1 && a.warmupCost.steadyAvgCostUsd > 0) {
+      const overhead = a.warmupCost.warmupCostUsd - a.warmupCost.steadyAvgCostUsd;
+      if (overhead > 0) {
+        warmupOverhead += overhead;
+        warmupSessions++;
+      }
+    }
+  }
+  if (warmupSessions > 0) {
+    const avgOverhead = warmupOverhead / warmupSessions;
+    lines.push(` Warmup overhead: ${formatCost(warmupOverhead)} across ${warmupSessions} sessions (avg ${formatCost(avgOverhead)}/session)`);
+  }
+
+  // Stuck loop summary
+  let stuckSessions = 0;
+  let totalLoops = 0;
+  let totalRetries = 0;
+  for (const a of analyses) {
+    if (a.stuckLoops && a.stuckLoops.length > 0) {
+      stuckSessions++;
+      totalLoops += a.stuckLoops.length;
+      totalRetries += a.stuckLoops.reduce((s, l) => s + l.attempts, 0);
+    }
+  }
+  if (stuckSessions > 0) {
+    const avgRetries = Math.round((totalRetries / totalLoops) * 10) / 10;
+    lines.push(` ${stuckSessions} sessions had stuck loops (${totalLoops} total, avg ${avgRetries} retries)`);
+  }
+
+  return lines;
 }

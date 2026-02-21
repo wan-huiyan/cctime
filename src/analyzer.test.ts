@@ -32,13 +32,18 @@ function userMsg(ts: string, text?: string): SessionMessage {
   });
 }
 
-function toolResultMsg(ts: string, toolUseIds: string[]): SessionMessage {
+function toolResultMsg(ts: string, toolUseIds: string[], opts?: { isError?: boolean }): SessionMessage {
   return msg({
     type: 'user',
     timestamp: ts,
     message: {
       role: 'user',
-      content: toolUseIds.map(id => ({ type: 'tool_result' as const, tool_use_id: id, content: 'ok' })),
+      content: toolUseIds.map(id => ({
+        type: 'tool_result' as const,
+        tool_use_id: id,
+        content: opts?.isError ? 'error' : 'ok',
+        is_error: opts?.isError,
+      })),
     },
   });
 }
@@ -302,5 +307,119 @@ describe('analyzer: planning mode', () => {
       toolResultMsg('2026-01-01T00:00:14Z', ['pm2']),
     ]);
     expect(result.enhancedStats.planning).toBeGreaterThan(0);
+  });
+});
+
+describe('analyzer: stuck loops', () => {
+  it('should detect 2+ consecutive failures of same tool', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:00:01Z', { toolUses: [{ id: 'tu1', name: 'Bash' }] }),
+      toolResultMsg('2026-01-01T00:00:02Z', ['tu1'], { isError: true }),
+      assistantMsg('2026-01-01T00:00:03Z', { toolUses: [{ id: 'tu2', name: 'Bash' }] }),
+      toolResultMsg('2026-01-01T00:00:04Z', ['tu2'], { isError: true }),
+      assistantMsg('2026-01-01T00:00:05Z', { toolUses: [{ id: 'tu3', name: 'Bash' }] }),
+      toolResultMsg('2026-01-01T00:00:06Z', ['tu3'], { isError: true }),
+    ]);
+
+    expect(result.stuckLoops).toHaveLength(1);
+    expect(result.stuckLoops[0].toolName).toBe('Bash');
+    expect(result.stuckLoops[0].attempts).toBe(3);
+    expect(result.stuckLoops[0].failures).toBe(3);
+    expect(result.stuckLoops[0].resolved).toBe(false);
+  });
+
+  it('should mark as resolved when final attempt succeeds', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:00:01Z', { toolUses: [{ id: 'tu1', name: 'Edit' }] }),
+      toolResultMsg('2026-01-01T00:00:02Z', ['tu1'], { isError: true }),
+      assistantMsg('2026-01-01T00:00:03Z', { toolUses: [{ id: 'tu2', name: 'Edit' }] }),
+      toolResultMsg('2026-01-01T00:00:04Z', ['tu2'], { isError: true }),
+      assistantMsg('2026-01-01T00:00:05Z', { toolUses: [{ id: 'tu3', name: 'Edit' }] }),
+      toolResultMsg('2026-01-01T00:00:36Z', ['tu3']), // success after 2 failures
+    ]);
+
+    expect(result.stuckLoops).toHaveLength(1);
+    expect(result.stuckLoops[0].resolved).toBe(true);
+    expect(result.stuckLoops[0].attempts).toBe(3);
+    expect(result.stuckLoops[0].failures).toBe(2);
+    expect(result.stuckLoops[0].durationMs).toBe(35000); // 00:01 to 00:36
+  });
+
+  it('should NOT flag single failures', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:00:01Z', { toolUses: [{ id: 'tu1', name: 'Bash' }] }),
+      toolResultMsg('2026-01-01T00:00:02Z', ['tu1'], { isError: true }),
+      assistantMsg('2026-01-01T00:00:03Z', { toolUses: [{ id: 'tu2', name: 'Read' }] }), // different tool
+      toolResultMsg('2026-01-01T00:00:04Z', ['tu2']),
+    ]);
+
+    expect(result.stuckLoops).toHaveLength(0);
+  });
+
+  it('should track independent tools separately', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      // Bash fails twice
+      assistantMsg('2026-01-01T00:00:01Z', { toolUses: [{ id: 'tu1', name: 'Bash' }] }),
+      toolResultMsg('2026-01-01T00:00:02Z', ['tu1'], { isError: true }),
+      assistantMsg('2026-01-01T00:00:03Z', { toolUses: [{ id: 'tu2', name: 'Bash' }] }),
+      toolResultMsg('2026-01-01T00:00:04Z', ['tu2'], { isError: true }),
+      // Switch to Read (breaks Bash chain)
+      assistantMsg('2026-01-01T00:00:05Z', { toolUses: [{ id: 'tu3', name: 'Read' }] }),
+      toolResultMsg('2026-01-01T00:00:06Z', ['tu3']),
+      // Edit fails twice
+      assistantMsg('2026-01-01T00:00:07Z', { toolUses: [{ id: 'tu4', name: 'Edit' }] }),
+      toolResultMsg('2026-01-01T00:00:08Z', ['tu4'], { isError: true }),
+      assistantMsg('2026-01-01T00:00:09Z', { toolUses: [{ id: 'tu5', name: 'Edit' }] }),
+      toolResultMsg('2026-01-01T00:00:10Z', ['tu5'], { isError: true }),
+    ]);
+
+    expect(result.stuckLoops).toHaveLength(2);
+    expect(result.stuckLoops[0].toolName).toBe('Bash');
+    expect(result.stuckLoops[1].toolName).toBe('Edit');
+  });
+});
+
+describe('analyzer: warmup cost', () => {
+  it('should compute first turn cost vs steady state', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:00:05Z', {
+        model: 'claude-opus-4-6',
+        usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 0, cache_creation_input_tokens: 20000 },
+      }),
+      userMsg('2026-01-01T00:01:00Z'),
+      assistantMsg('2026-01-01T00:01:05Z', {
+        model: 'claude-opus-4-6',
+        usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 20000, cache_creation_input_tokens: 0 },
+      }),
+      userMsg('2026-01-01T00:02:00Z'),
+      assistantMsg('2026-01-01T00:02:05Z', {
+        model: 'claude-opus-4-6',
+        usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 20000, cache_creation_input_tokens: 0 },
+      }),
+    ]);
+
+    // Turn 1: cache_creation 20K Opus = 20000/1M * 15 * 1.25 = 0.375 + input + output
+    expect(result.warmupCost.warmupCostUsd).toBeGreaterThan(result.warmupCost.steadyAvgCostUsd);
+    expect(result.warmupCost.warmupCacheCreation).toBe(20000);
+    expect(result.warmupCost.turnCount).toBe(3);
+  });
+
+  it('should handle single-turn session', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:00:05Z', {
+        model: 'claude-opus-4-6',
+        usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 0, cache_creation_input_tokens: 5000 },
+      }),
+    ]);
+
+    expect(result.warmupCost.warmupCostUsd).toBeGreaterThan(0);
+    expect(result.warmupCost.steadyAvgCostUsd).toBe(0); // no subsequent turns
+    expect(result.warmupCost.turnCount).toBe(1);
   });
 });

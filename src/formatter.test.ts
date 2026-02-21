@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatSession, formatAggregate, formatSessionLive, formatCompact, formatCsv, formatMarkdown, formatJsonAggregate } from './formatter.js';
-import type { SessionAnalysis, EnhancedStats } from './types.js';
+import type { SessionAnalysis, EnhancedStats, StuckLoop, WarmupCost } from './types.js';
 
 // Strip ANSI codes for assertion
 function strip(s: string): string {
@@ -33,6 +33,8 @@ function makeAnalysis(overrides: Partial<SessionAnalysis> = {}): SessionAnalysis
     estimatedCostUsd: 1.25,
     costPerMinuteUsd: 0.08,
     contextTrend: [10000, 15000, 20000, 25000, 30000, 35000],
+    stuckLoops: [],
+    warmupCost: { warmupCostUsd: 0, steadyAvgCostUsd: 0, warmupCacheCreation: 0, turnCount: 0 },
     ...overrides,
   };
 }
@@ -350,5 +352,64 @@ describe('formatter: json aggregate', () => {
     expect(result.summary.sessionCount).toBe(2);
     expect(result.summary.totalCostUsd).toBe(4);
     expect(result.sessions).toHaveLength(2);
+  });
+});
+
+describe('formatter: insights', () => {
+  it('should show stuck loop warnings in insights section', () => {
+    const analysis = makeAnalysis({
+      stuckLoops: [
+        { toolName: 'Bash', attempts: 4, failures: 3, durationMs: 150000, startTime: 0, endTime: 150000, resolved: true },
+        { toolName: 'Edit', attempts: 3, failures: 3, durationMs: 75000, startTime: 0, endTime: 75000, resolved: false },
+      ],
+    });
+    const output = strip(formatSession(analysis));
+    expect(output).toContain('Insights');
+    expect(output).toContain('Stuck: Bash');
+    expect(output).toContain('4 retries');
+    expect(output).toContain('resolved');
+    expect(output).toContain('Stuck: Edit');
+    expect(output).toContain('unresolved');
+  });
+
+  it('should show warmup cost in insights section', () => {
+    const analysis = makeAnalysis({
+      warmupCost: { warmupCostUsd: 0.43, steadyAvgCostUsd: 0.13, warmupCacheCreation: 50000, turnCount: 6 },
+    });
+    const output = strip(formatSession(analysis));
+    expect(output).toContain('Insights');
+    expect(output).toContain('Warmup');
+    expect(output).toContain('$0.43');
+    expect(output).toContain('$0.13');
+  });
+
+  it('should hide insights section when no stuck loops and trivial warmup', () => {
+    const analysis = makeAnalysis({
+      stuckLoops: [],
+      warmupCost: { warmupCostUsd: 0.10, steadyAvgCostUsd: 0.09, warmupCacheCreation: 1000, turnCount: 5 },
+    });
+    const output = strip(formatSession(analysis));
+    expect(output).not.toContain('Insights');
+  });
+
+  it('should show stuck count in aggregate insights', () => {
+    const sessions = [
+      makeAnalysis({
+        stuckLoops: [
+          { toolName: 'Bash', attempts: 3, failures: 2, durationMs: 60000, startTime: 0, endTime: 60000, resolved: true },
+          { toolName: 'Edit', attempts: 4, failures: 3, durationMs: 90000, startTime: 0, endTime: 90000, resolved: false },
+        ],
+        warmupCost: { warmupCostUsd: 0.43, steadyAvgCostUsd: 0.13, warmupCacheCreation: 50000, turnCount: 6 },
+      }),
+      makeAnalysis({
+        stuckLoops: [],
+        warmupCost: { warmupCostUsd: 0.40, steadyAvgCostUsd: 0.12, warmupCacheCreation: 45000, turnCount: 5 },
+      }),
+    ];
+    const output = strip(formatAggregate(sessions, 'Test'));
+    expect(output).toContain('Insights');
+    expect(output).toContain('1 sessions had stuck loops');
+    expect(output).toContain('2 total');
+    expect(output).toContain('Warmup overhead');
   });
 });

@@ -58,6 +58,24 @@ export interface MessageContent {
   tool_use_id?: string;
   text?: string;
   content?: string | MessageContent[];
+  is_error?: boolean;
+}
+
+export interface StuckLoop {
+  toolName: string;
+  attempts: number;
+  failures: number;
+  durationMs: number;
+  startTime: number;
+  endTime: number;
+  resolved: boolean;
+}
+
+export interface WarmupCost {
+  warmupCostUsd: number;
+  steadyAvgCostUsd: number;
+  warmupCacheCreation: number;
+  turnCount: number;
 }
 
 export interface SessionMessage {
@@ -116,6 +134,8 @@ export interface SessionAnalysis {
   estimatedCostUsd: number;
   costPerMinuteUsd: number;
   contextTrend: number[];
+  stuckLoops: StuckLoop[];
+  warmupCost: WarmupCost;
 }
 
 export interface SessionIndexEntry {
@@ -144,6 +164,10 @@ export interface AggregateJson {
     totalTokensIn: number;
     totalTokensOut: number;
     totalTurns: number;
+    warmupOverheadUsd: number;
+    stuckLoopSessions: number;
+    stuckLoopTotal: number;
+    stuckLoopAvgRetries: number;
   };
   sessions: SessionAnalysis[];
 }
