@@ -7,7 +7,7 @@ import { getLastSession, getTodaySessions, getWeekSessions, getMonthSessions, ge
 import { parseSession } from './parser.js';
 import { analyzeSession } from './analyzer.js';
 import { formatSession, formatAggregate, formatCompact, formatCsv, formatMarkdown, formatJsonAggregate } from './formatter.js';
-import { startLiveMode } from './live.js';
+import { startLiveMode, startAggregateLiveMode } from './live.js';
 import type { SessionIndexEntry, SessionAnalysis } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -146,8 +146,8 @@ program
     if (opts.color === true) process.env.FORCE_COLOR = '1';
 
     try {
-      // Live mode
-      if (opts.live) {
+      // Live mode — single session (no period flag)
+      if (opts.live && !opts.day && !opts.all && !opts.week && !opts.month && !opts.since) {
         await startLiveMode(opts.project);
         return;
       }
@@ -206,6 +206,24 @@ program
         } else {
           console.log(formatSession(analysis));
         }
+        return;
+      }
+
+      // Aggregate live mode — live-updating view of the period
+      if (opts.live) {
+        let getEntries: () => Promise<SessionIndexEntry[]>;
+        if (opts.since) {
+          const sinceMs = parseDate(opts.since);
+          const untilMs = opts.until ? parseDate(opts.until) : undefined;
+          getEntries = () => getSessionsSince(sinceMs, opts.project, untilMs);
+        } else if (opts.month) {
+          getEntries = () => getMonthSessions(opts.project);
+        } else if (opts.week) {
+          getEntries = () => getWeekSessions(opts.project);
+        } else {
+          getEntries = () => getTodaySessions(opts.project);
+        }
+        await startAggregateLiveMode(getEntries, label, opts.project);
         return;
       }
 

@@ -2,10 +2,10 @@ import { watch, type FSWatcher } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { parseSessionFrom } from './parser.js';
+import { parseSession, parseSessionFrom } from './parser.js';
 import { analyzeSession } from './analyzer.js';
-import { formatSessionLive } from './formatter.js';
-import type { SessionMessage } from './types.js';
+import { formatSessionLive, formatAggregateLive } from './formatter.js';
+import type { SessionMessage, SessionAnalysis, SessionIndexEntry } from './types.js';
 
 const ACTIVE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 const DEBOUNCE_MS = 300;
@@ -143,6 +143,104 @@ export async function startLiveMode(projectFilter?: string): Promise<void> {
     if (debounceTimer) clearTimeout(debounceTimer);
     clearInterval(periodicTimer);
     // Restore cursor
+    process.stdout.write('\x1b[?25h');
+    process.exit(0);
+  }
+
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
+}
+
+export async function startAggregateLiveMode(
+  getEntries: () => Promise<SessionIndexEntry[]>,
+  label: string,
+  projectFilter?: string,
+): Promise<void> {
+  // Find the active session to watch for changes
+  const found = await findActiveSession(projectFilter);
+  if (!found) {
+    console.error('No active session found (modified within last 5 minutes).');
+    console.error('Start a Claude Code session, then run cctime --live in another terminal.');
+    process.exit(1);
+  }
+  const active = found;
+
+  let activeMessages: SessionMessage[] = [];
+  let byteOffset = 0;
+  let watcher: FSWatcher | null = null;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let isRefreshing = false;
+
+  // Cache completed session analyses (keyed by sessionId)
+  const completedCache = new Map<string, SessionAnalysis>();
+
+  async function refresh() {
+    if (isRefreshing) return;
+    isRefreshing = true;
+    try {
+      // Re-fetch entry list (picks up new sessions started during the day)
+      const entries = await getEntries();
+
+      // Parse + analyze all non-active sessions (use cache for completed ones)
+      const analyses: SessionAnalysis[] = [];
+      for (const entry of entries) {
+        if (entry.sessionId === active.sessionId) continue;
+        const cached = completedCache.get(entry.sessionId);
+        if (cached) {
+          analyses.push(cached);
+        } else {
+          const messages = await parseSession(entry.fullPath);
+          const analysis = analyzeSession(entry.sessionId, messages);
+          if (analysis.summary === 'Untitled session' && entry.summary) {
+            analysis.summary = entry.summary;
+          }
+          completedCache.set(entry.sessionId, analysis);
+          analyses.push(analysis);
+        }
+      }
+
+      // Incrementally parse the active session
+      const { messages: newMessages, bytesRead } = await parseSessionFrom(active.fullPath, byteOffset);
+      if (newMessages.length > 0) {
+        activeMessages.push(...newMessages);
+      }
+      byteOffset = bytesRead;
+
+      const activeAnalysis = analyzeSession(active.sessionId, activeMessages);
+      analyses.push(activeAnalysis);
+
+      // Clear screen and redraw
+      process.stdout.write('\x1b[2J\x1b[H');
+      process.stdout.write(formatAggregateLive(analyses, label));
+    } catch {
+      // Skip on transient errors
+    } finally {
+      isRefreshing = false;
+    }
+  }
+
+  // Hide cursor
+  process.stdout.write('\x1b[?25l');
+
+  // Initial render
+  await refresh();
+
+  // Watch active session file for changes
+  watcher = watch(active.fullPath, () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(refresh, DEBOUNCE_MS);
+  });
+  watcher.on('error', () => {
+    // Ignore — periodic refresh will keep updating
+  });
+
+  // Periodic refresh (picks up new sessions, updates wall-clock timers)
+  const periodicTimer = setInterval(refresh, 5000);
+
+  function cleanup() {
+    if (watcher) { watcher.close(); watcher = null; }
+    if (debounceTimer) clearTimeout(debounceTimer);
+    clearInterval(periodicTimer);
     process.stdout.write('\x1b[?25h');
     process.exit(0);
   }

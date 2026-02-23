@@ -471,6 +471,134 @@ export function formatAggregate(analyses: SessionAnalysis[], label: string): str
   return lines.join('\n');
 }
 
+// ── Aggregate live mode ──
+
+export function formatAggregateLive(analyses: SessionAnalysis[], label: string): string {
+  const lines: string[] = [];
+
+  lines.push('');
+  lines.push(` ${chalk.bold('cctime')} \u00b7 ${chalk.bgRed.white.bold(' LIVE ')}${chalk.gray(' \u00b7 ' + label)}`);
+  lines.push(`  ${analyses.length} sessions`);
+
+  // Aggregate enhanced stats
+  const totalEnhanced: EnhancedStats = { humanWait: 0, humanAway: 0, claudeThink: 0, toolExec: 0, subagent: 0, planning: 0 };
+  let totalDuration = 0;
+  let totalTokensIn = 0, totalTokensOut = 0;
+  let totalCost = 0;
+  const allModels: Record<string, number> = {};
+  const allTools: Record<string, number> = {};
+  const allToolLatencies = new Map<string, { totalMs: number; count: number }>();
+
+  for (const a of analyses) {
+    totalDuration += a.durationMs;
+    for (const phase of activePhaseOrder) {
+      totalEnhanced[phase] += a.enhancedStats[phase];
+    }
+    totalEnhanced.humanAway += a.enhancedStats.humanAway;
+    totalTokensIn += a.tokens.input + a.tokens.cacheRead + a.tokens.cacheCreation;
+    totalTokensOut += a.tokens.output;
+    totalCost += a.estimatedCostUsd;
+    for (const [m, c] of Object.entries(a.models)) allModels[m] = (allModels[m] || 0) + c;
+    for (const [t, c] of Object.entries(a.tools)) allTools[t] = (allTools[t] || 0) + c;
+    for (const tl of a.toolLatencies) {
+      const existing = allToolLatencies.get(tl.name) || { totalMs: 0, count: 0 };
+      existing.totalMs += tl.totalMs;
+      existing.count += tl.count;
+      allToolLatencies.set(tl.name, existing);
+    }
+  }
+
+  const totalActive = Math.max(0, totalDuration - totalEnhanced.humanAway);
+
+  // Time breakdown
+  lines.push('');
+  lines.push(hr('Time Breakdown'));
+  const awayAgg = totalEnhanced.humanAway > 0 ? chalk.gray(` (${formatDuration(totalEnhanced.humanAway)} away)`) : '';
+  lines.push(`  ${chalk.bold(formatDuration(totalActive))} active${chalk.gray(' of ' + formatDuration(totalDuration))}${awayAgg}`);
+  lines.push('');
+
+  for (const phase of activePhaseOrder) {
+    const ms = totalEnhanced[phase];
+    if (ms === 0) continue;
+    const fraction = totalActive > 0 ? ms / totalActive : 0;
+    const pct = Math.round(fraction * 100);
+    const bar = renderBar(fraction, eColors[phase]);
+    const pLabel = eLabels[phase].padEnd(16);
+    lines.push(` ${pLabel}${bar} ${formatDuration(ms).padStart(5)}  (${String(pct).padStart(2)}%)`);
+  }
+
+  // Tokens & Cost
+  lines.push('');
+  lines.push(hr('Tokens & Cost'));
+
+  const aggTotalTok = totalTokensIn + totalTokensOut;
+  if (aggTotalTok > 0) {
+    const inFrac = totalTokensIn / aggTotalTok;
+    const inBar = Math.round(inFrac * BAR_WIDTH);
+    const outBar = BAR_WIDTH - inBar;
+    lines.push(` Tokens  ${chalk.cyan('\u2588'.repeat(inBar))}${chalk.green('\u2588'.repeat(outBar))}  ${chalk.cyan(formatTokens(totalTokensIn) + ' in')} ${chalk.green(formatTokens(totalTokensOut) + ' out')}`);
+  }
+  const avgCost = analyses.length > 0 ? totalCost / analyses.length : 0;
+  lines.push(` Cost    ~${formatCost(totalCost)}  (${analyses.length} sessions, avg ${formatCost(avgCost)}/session)`);
+
+  // Models
+  const modelEntries = Object.entries(allModels).sort((a, b) => b[1] - a[1]);
+  if (modelEntries.length > 0) {
+    lines.push('');
+    lines.push(hr('Models'));
+    const totalModelCalls = modelEntries.reduce((s, [, n]) => s + n, 0);
+    for (const [name, count] of modelEntries) {
+      const frac = count / totalModelCalls;
+      const pct = Math.round(frac * 100);
+      const bar = renderBar(frac, name === 'Opus' ? chalk.magenta : name === 'Haiku' ? chalk.green : chalk.blue);
+      lines.push(` ${name.padEnd(8)} ${bar} ${String(pct).padStart(3)}%  (${count} calls)`);
+    }
+  }
+
+  // Tools
+  const toolEntries = Object.entries(allTools).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  if (toolEntries.length > 0) {
+    lines.push('');
+    lines.push(hr('Tools'));
+    const maxCalls = toolEntries[0][1];
+    for (const [name, count] of toolEntries) {
+      const frac = count / maxCalls;
+      const bar = renderBar(frac, chalk.yellow);
+      const latData = allToolLatencies.get(name);
+      const latStr = latData && latData.count > 0
+        ? chalk.gray(` avg ${formatLatency(latData.totalMs / latData.count)}`)
+        : '';
+      lines.push(` ${truncName(name)} ${bar} ${String(count).padStart(4)} calls${latStr}`);
+    }
+  }
+
+  // Activity heatmap
+  lines.push('');
+  lines.push(hr('Activity'));
+
+  const hourlyMs = new Array(24).fill(0);
+  for (const a of analyses) {
+    const startHour = new Date(a.startTime).getHours();
+    const aMs = Math.max(0, a.durationMs - a.enhancedStats.humanAway);
+    hourlyMs[startHour] += aMs;
+  }
+  const maxHourMs = Math.max(...hourlyMs, 1);
+  const sparkChars = '\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588';
+  const heatmap = hourlyMs.map(ms => {
+    if (ms === 0) return chalk.gray('\u2581');
+    const idx = Math.round((ms / maxHourMs) * (sparkChars.length - 1));
+    return chalk.cyan(sparkChars[idx]);
+  }).join('');
+  lines.push(`  ${heatmap}`);
+  lines.push(chalk.gray('  12a  3a  6a  9a  12p  3p  6p  9p'));
+
+  // Footer
+  lines.push('');
+  lines.push(chalk.gray(' Ctrl+C to exit'));
+  lines.push('');
+  return lines.join('\n');
+}
+
 // ── Compact view (one line per session) ──
 
 export function formatCompact(analyses: SessionAnalysis[]): string {
