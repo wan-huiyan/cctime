@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { program } from 'commander';
-import { getLastSession, getTodaySessions, getWeekSessions, getSessionsSince, getSessionById } from './finder.js';
+import { getLastSession, getTodaySessions, getWeekSessions, getMonthSessions, getSessionsSince, getSessionById } from './finder.js';
 import { parseSession } from './parser.js';
 import { analyzeSession } from './analyzer.js';
 import { formatSession, formatAggregate, formatCompact, formatCsv, formatMarkdown, formatJsonAggregate } from './formatter.js';
@@ -122,7 +122,9 @@ program
   .description('Real-time Claude Code session analytics — live dashboard, time breakdown, cost tracking')
   .version(pkg.version)
   .option('--all', 'All sessions today')
+  .option('--day', 'Today\'s sessions')
   .option('--week', 'Weekly rollup')
+  .option('--month', 'Monthly rollup (30 days)')
   .option('--live', 'Live-updating dashboard (watches active session)')
   .option('--session <id>', 'Analyze a specific session by ID (or prefix)')
   .option('--since <date>', 'Sessions since date (ISO, "today", "yesterday")')
@@ -179,10 +181,13 @@ program
         entries = await getSessionsSince(sinceMs, opts.project, untilMs);
         const sinceStr = new Date(sinceMs).toLocaleDateString();
         label = untilMs ? `${sinceStr} — ${new Date(untilMs).toLocaleDateString()}` : `Since ${sinceStr}`;
+      } else if (opts.month) {
+        entries = await getMonthSessions(opts.project);
+        label = 'This Month';
       } else if (opts.week) {
         entries = await getWeekSessions(opts.project);
         label = 'This Week';
-      } else if (opts.all) {
+      } else if (opts.day || opts.all) {
         entries = await getTodaySessions(opts.project);
         label = 'Today';
       } else {

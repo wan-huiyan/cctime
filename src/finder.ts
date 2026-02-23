@@ -126,6 +126,13 @@ export async function getWeekSessions(projectFilter?: string): Promise<SessionIn
   return getSessionsSince(weekAgo.getTime(), projectFilter);
 }
 
+export async function getMonthSessions(projectFilter?: string): Promise<SessionIndexEntry[]> {
+  const now = new Date();
+  const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  monthAgo.setHours(0, 0, 0, 0);
+  return getSessionsSince(monthAgo.getTime(), projectFilter);
+}
+
 export async function getSessionsSince(sinceMs: number, projectFilter?: string, untilMs?: number): Promise<SessionIndexEntry[]> {
   const dirs = await listProjectDirs();
   let allEntries: SessionIndexEntry[] = [];
@@ -138,9 +145,9 @@ export async function getSessionsSince(sinceMs: number, projectFilter?: string, 
       if (!dir.endsWith(encoded)) continue;
     }
     let entries = filterMainSessions(index.entries)
-      .filter(e => new Date(e.modified).getTime() >= sinceMs);
+      .filter(e => new Date(e.created).getTime() >= sinceMs);
     if (untilMs !== undefined) {
-      entries = entries.filter(e => new Date(e.modified).getTime() <= untilMs);
+      entries = entries.filter(e => new Date(e.created).getTime() <= untilMs);
     }
     allEntries.push(...entries);
   }
