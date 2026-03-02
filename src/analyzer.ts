@@ -6,6 +6,7 @@ import type {
 import { estimateCost } from './pricing.js';
 
 const IDLE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
 
 export function analyzeSession(sessionId: string, messages: SessionMessage[]): SessionAnalysis {
   const mainMessages = messages.filter(m => !m.isSidechain);
@@ -120,7 +121,7 @@ function detectPhases(messages: SessionMessage[]): TimeSegment[] {
           if (!planModeActive) { closeCurrentPhase(ts); planModeActive = true; currentPhase = 'planning'; }
         } else if (c.name === 'ExitPlanMode') {
           if (planModeActive) { closeCurrentPhase(ts); planModeActive = false; currentPhase = 'coding'; }
-        } else if (c.name === 'Task' && c.id) {
+        } else if (c.name && SUBAGENT_TOOLS.has(c.name) && c.id) {
           activeSubagents.set(c.id, ts);
           if (activeSubagents.size === 1) { closeCurrentPhase(ts); currentPhase = 'subagent'; }
         }
@@ -163,8 +164,8 @@ function detectEnhancedPhases(messages: SessionMessage[]): EnhancedTimeSegment[]
 
   // Track pending tool_use calls: id -> { name, timestamp }
   const pendingTools = new Map<string, { name: string; ts: number }>();
-  // Track pending subagent calls (Task tool): id -> timestamp
-  const pendingSubagents = new Map<string, number>();
+  // Track pending subagent calls (Task/Agent tool): id -> { name, timestamp }
+  const pendingSubagents = new Map<string, { name: string; ts: number }>();
 
   let lastAssistantEndTs: number | null = null;
   let lastExternalUserTs: number | null = null;
@@ -189,8 +190,8 @@ function detectEnhancedPhases(messages: SessionMessage[]): EnhancedTimeSegment[]
           if (c.type !== 'tool_result' || !c.tool_use_id) continue;
 
           if (pendingSubagents.has(c.tool_use_id)) {
-            const startTs = pendingSubagents.get(c.tool_use_id)!;
-            emit('subagent', startTs, ts, 'Task');
+            const { name, ts: startTs } = pendingSubagents.get(c.tool_use_id)!;
+            emit('subagent', startTs, ts, name);
             pendingSubagents.delete(c.tool_use_id);
           } else if (pendingTools.has(c.tool_use_id)) {
             const { name, ts: startTs } = pendingTools.get(c.tool_use_id)!;
@@ -245,8 +246,8 @@ function detectEnhancedPhases(messages: SessionMessage[]): EnhancedTimeSegment[]
           planModeActive = true;
         } else if (c.name === 'ExitPlanMode') {
           planModeActive = false;
-        } else if (c.name === 'Task') {
-          pendingSubagents.set(c.id, ts);
+        } else if (c.name && SUBAGENT_TOOLS.has(c.name)) {
+          pendingSubagents.set(c.id, { name: c.name, ts });
         } else {
           pendingTools.set(c.id, { name: c.name ?? 'unknown', ts });
         }

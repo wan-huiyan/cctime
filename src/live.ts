@@ -135,16 +135,25 @@ export async function startLiveMode(projectFilter?: string): Promise<void> {
   const periodicTimer = setInterval(refresh, 5000);
 
   // Graceful shutdown
+  let cleaningUp = false;
   function cleanup() {
-    if (watcher) {
-      watcher.close();
-      watcher = null;
+    if (cleaningUp) {
+      process.exit(1);
     }
-    if (debounceTimer) clearTimeout(debounceTimer);
-    clearInterval(periodicTimer);
-    // Restore cursor
-    process.stdout.write('\x1b[?25h');
-    process.exit(0);
+    cleaningUp = true;
+    try {
+      if (watcher) {
+        watcher.close();
+        watcher = null;
+      }
+      if (debounceTimer) clearTimeout(debounceTimer);
+      clearInterval(periodicTimer);
+      process.stdout.write('\x1b[?25h');
+    } catch {
+      // Ignore cleanup errors
+    } finally {
+      process.exit(0);
+    }
   }
 
   process.on('SIGINT', cleanup);
@@ -237,12 +246,22 @@ export async function startAggregateLiveMode(
   // Periodic refresh (picks up new sessions, updates wall-clock timers)
   const periodicTimer = setInterval(refresh, 5000);
 
+  let cleaningUp = false;
   function cleanup() {
-    if (watcher) { watcher.close(); watcher = null; }
-    if (debounceTimer) clearTimeout(debounceTimer);
-    clearInterval(periodicTimer);
-    process.stdout.write('\x1b[?25h');
-    process.exit(0);
+    if (cleaningUp) {
+      process.exit(1);
+    }
+    cleaningUp = true;
+    try {
+      if (watcher) { watcher.close(); watcher = null; }
+      if (debounceTimer) clearTimeout(debounceTimer);
+      clearInterval(periodicTimer);
+      process.stdout.write('\x1b[?25h');
+    } catch {
+      // Ignore cleanup errors
+    } finally {
+      process.exit(0);
+    }
   }
 
   process.on('SIGINT', cleanup);

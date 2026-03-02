@@ -111,7 +111,7 @@ describe('analyzer: enhanced phases', () => {
     expect(result.enhancedStats.claudeThink).toBe(6000);
   });
 
-  it('should classify Task tool as subagent time', () => {
+  it('should classify Task tool as subagent time (legacy)', () => {
     const result = analyzeSession('s1', [
       userMsg('2026-01-01T00:00:00Z'),
       assistantMsg('2026-01-01T00:00:02Z', { toolUses: [{ id: 'tu1', name: 'Task' }] }),
@@ -120,6 +120,27 @@ describe('analyzer: enhanced phases', () => {
 
     expect(result.enhancedStats.subagent).toBe(58000);
     expect(result.enhancedStats.toolExec).toBe(0);
+  });
+
+  it('should classify Agent tool as subagent time', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:00:02Z', { toolUses: [{ id: 'tu1', name: 'Agent' }] }),
+      toolResultMsg('2026-01-01T00:01:00Z', ['tu1']), // 58s subagent
+    ]);
+
+    expect(result.enhancedStats.subagent).toBe(58000);
+    expect(result.enhancedStats.toolExec).toBe(0);
+  });
+
+  it('should classify Agent tool as subagent in legacy phases', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:00:02Z', { toolUses: [{ id: 'tu1', name: 'Agent' }] }),
+      toolResultMsg('2026-01-01T00:01:00Z', ['tu1']),
+    ]);
+
+    expect(result.stats.subagent).toBeGreaterThan(0);
   });
 
   it('should not double-count away time in active duration', () => {
