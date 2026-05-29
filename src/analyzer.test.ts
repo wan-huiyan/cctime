@@ -444,3 +444,37 @@ describe('analyzer: warmup cost', () => {
     expect(result.warmupCost.turnCount).toBe(1);
   });
 });
+
+describe('analyzer: thinking gaps are capped (mid-turn suspension ≠ thinking)', () => {
+  const CAP = 10 * 60 * 1000; // THINK_CAP_MS
+
+  it('caps a long tool_result→assistant gap: 10min think + remainder humanAway', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:00:02Z', { toolUses: [{ id: 'tu1', name: 'Bash' }] }),
+      toolResultMsg('2026-01-01T00:00:12Z', ['tu1']),
+      assistantMsg('2026-01-01T02:00:12Z'), // 2h gap after the tool result (session suspended)
+    ]);
+    // 2s legit first-response think (user→assistant) + 10min cap on the suspended gap
+    expect(result.enhancedStats.claudeThink).toBe(2000 + CAP);
+    expect(result.enhancedStats.humanAway).toBe(2 * 60 * 60 * 1000 - CAP); // 1h50m booked as away
+  });
+
+  it('caps a long user→assistant first-response gap the same way', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T03:00:00Z'), // 3h before first response (suspended)
+    ]);
+    expect(result.enhancedStats.claudeThink).toBe(CAP);
+    expect(result.enhancedStats.humanAway).toBe(3 * 60 * 60 * 1000 - CAP);
+  });
+
+  it('leaves a normal short think gap untouched (no spurious humanAway)', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:05:00Z'), // 5min < cap
+    ]);
+    expect(result.enhancedStats.claudeThink).toBe(5 * 60 * 1000);
+    expect(result.enhancedStats.humanAway).toBe(0);
+  });
+});
