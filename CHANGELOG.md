@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   percentages stay a true partition that sums to <=100% (previously could read
   e.g. 109%). On a fan-out-heavy session this dropped reported subagent time from
   ~53m (sum of 19 overlapping agents) to ~38m (true elapsed).
+- **Default to the *current* session, not "most recently modified file".** Run with no
+  args, `cctime` now resolves `CLAUDE_CODE_SESSION_ID` (which Claude Code exports to
+  subprocesses) via the authoritative by-id lookup, so it reports the session you're
+  actually in — previously it picked whichever session's JSONL was written last, which
+  loses to any concurrently-active session. The by-id path also skips the `messageCount>2`
+  "main session" filter, which could drop an active session whose cached index count is
+  stale. When not running inside Claude Code and ≥2 sessions were active in the last 5 min,
+  it prints which one it chose + a `--session` hint instead of choosing silently.
 
 ## [1.0.0] - 2026-02-18
 
