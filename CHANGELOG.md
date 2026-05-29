@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Parallel-subagent benefit insight.** The subagent phase is aggregated by wall-clock
+  union (overlapping fan-out isn't double-counted), but the *sum* of agent durations still
+  carries signal: `sum − union` = time saved by running them concurrently, `sum / union` =
+  effective concurrency. Adds an Insights line — e.g. `⚡ Parallel subagents: 5 ran in 38m
+  wall (53m of work · 1.4× concurrent · saved 15m vs sequential)` — shown only when ≥2
+  subagents actually overlapped, so sequential sessions get no spurious line.
+
 ### Fixed
 
 - **Time breakdown: cap "Claude thinking" gaps so mid-turn suspensions aren't counted as thinking.**
