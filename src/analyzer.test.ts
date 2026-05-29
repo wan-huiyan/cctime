@@ -444,3 +444,61 @@ describe('analyzer: warmup cost', () => {
     expect(result.warmupCost.turnCount).toBe(1);
   });
 });
+
+describe('analyzer: parallel subagents counted by wall-clock union', () => {
+  it('does not sum overlapping (fanned-out) subagent durations', () => {
+    // 3 Agents dispatched in ONE assistant turn (parallel fan-out), all starting
+    // at 00:00:10, returning staggered at +60s / +120s / +180s.
+    // Per-agent durations sum to 360s; true wall-clock elapsed is 180s.
+    const messages: SessionMessage[] = [
+      userMsg('2026-01-01T00:00:00Z', 'go'),
+      assistantMsg('2026-01-01T00:00:10Z', {
+        toolUses: [
+          { id: 'a1', name: 'Agent' },
+          { id: 'a2', name: 'Agent' },
+          { id: 'a3', name: 'Agent' },
+        ],
+      }),
+      toolResultMsg('2026-01-01T00:01:10Z', ['a1']),
+      toolResultMsg('2026-01-01T00:02:10Z', ['a2']),
+      toolResultMsg('2026-01-01T00:03:10Z', ['a3']),
+      assistantMsg('2026-01-01T00:03:20Z'),
+    ];
+    const a = analyzeSession('s', messages);
+    expect(a.enhancedStats.subagent).toBe(180_000); // union, NOT 360_000 sum
+    expect(a.enhancedStats.toolExec).toBe(0);
+  });
+
+  it('does not sum overlapping parallel non-agent tool calls either', () => {
+    // 2 Bash calls in one turn, overlapping: spans 60s + 120s (sum 180s), union 120s.
+    const messages: SessionMessage[] = [
+      userMsg('2026-01-01T00:00:00Z', 'go'),
+      assistantMsg('2026-01-01T00:00:10Z', {
+        toolUses: [
+          { id: 'b1', name: 'Bash' },
+          { id: 'b2', name: 'Bash' },
+        ],
+      }),
+      toolResultMsg('2026-01-01T00:01:10Z', ['b1']),
+      toolResultMsg('2026-01-01T00:02:10Z', ['b2']),
+      assistantMsg('2026-01-01T00:02:20Z'),
+    ];
+    const a = analyzeSession('s', messages);
+    expect(a.enhancedStats.toolExec).toBe(120_000); // union, NOT 180_000 sum
+    expect(a.enhancedStats.subagent).toBe(0);
+  });
+
+  it('sequential subagents still add up (no spurious union collapse)', () => {
+    // Two NON-overlapping agents: 60s then 60s = 120s union == 120s sum.
+    const messages: SessionMessage[] = [
+      userMsg('2026-01-01T00:00:00Z', 'go'),
+      assistantMsg('2026-01-01T00:00:10Z', { toolUses: [{ id: 'a1', name: 'Agent' }] }),
+      toolResultMsg('2026-01-01T00:01:10Z', ['a1']),
+      assistantMsg('2026-01-01T00:01:20Z', { toolUses: [{ id: 'a2', name: 'Agent' }] }),
+      toolResultMsg('2026-01-01T00:02:20Z', ['a2']),
+      assistantMsg('2026-01-01T00:02:30Z'),
+    ];
+    const a = analyzeSession('s', messages);
+    expect(a.enhancedStats.subagent).toBe(120_000);
+  });
+});
