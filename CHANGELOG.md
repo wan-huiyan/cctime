@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   These gaps are now capped at `THINK_CAP_MS` (10 min); the remainder is booked as `humanAway`.
   On a real 16 h session with overnight gaps this moved ~9 h out of "thinking"
   (11 h 34 m → 2 h 35 m) into away time, where it belongs.
+- **Time Breakdown: count parallel subagents/tools by wall-clock union, not sum.**
+  `computeEnhancedStats` emitted one segment per tool/agent and summed them, so
+  tools and subagents fanned out in a single assistant turn (e.g. a panel of
+  review subagents) were double-counted. The `Subagents` and `Tool execution`
+  bars are now aggregated by wall-clock interval union (subagent wins on
+  cross-kind overlap), so they reflect real elapsed time and the active-time
+  percentages stay a true partition that sums to <=100% (previously could read
+  e.g. 109%). On a fan-out-heavy session this dropped reported subagent time from
+  ~53m (sum of 19 overlapping agents) to ~38m (true elapsed).
 
 ## [1.0.0] - 2026-02-18
 
