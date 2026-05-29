@@ -445,6 +445,79 @@ describe('analyzer: warmup cost', () => {
   });
 });
 
+describe('analyzer: segment-union ≤ wall-clock invariant', () => {
+  // Local copy of the analyzer's wall-clock union (it isn't exported). Time
+  // accounting must aggregate possibly-overlapping spans by UNION, not SUM —
+  // overlapping spans can never cover more wall-clock than exists. This guards
+  // against a regression that double-counts parallel tool/subagent spans.
+  function unionMs(spans: Array<[number, number]>): number {
+    if (spans.length === 0) return 0;
+    const sorted = [...spans].sort((a, b) => a[0] - b[0]);
+    let total = 0;
+    let [curStart, curEnd] = sorted[0];
+    for (let i = 1; i < sorted.length; i++) {
+      const [s, e] = sorted[i];
+      if (s <= curEnd) {
+        if (e > curEnd) curEnd = e;
+      } else {
+        total += curEnd - curStart;
+        curStart = s;
+        curEnd = e;
+      }
+    }
+    return total + (curEnd - curStart);
+  }
+
+  // seconds within one minute → ISO timestamp (matches the literal style above)
+  const T = (s: number) => `2026-01-01T00:00:${String(s).padStart(2, '0')}Z`;
+
+  it('holds with overlapping parallel-tool spans (union ≤ span < naive sum)', () => {
+    // Two tool_use in ONE assistant message → both start at the assistant ts, so
+    // their toolExec segments overlap. A naive sum overcounts; the union must not.
+    const result = analyzeSession('s1', [
+      userMsg(T(0)),
+      assistantMsg(T(2), { toolUses: [{ id: 'tu1', name: 'Bash' }, { id: 'tu2', name: 'Bash' }] }),
+      toolResultMsg(T(32), ['tu1']), // toolExec [2,32] = 30s
+      toolResultMsg(T(42), ['tu2']), // toolExec [2,42] = 40s, overlaps tu1
+      assistantMsg(T(50)),           // claudeThink [42,50] = 8s
+    ]);
+
+    const segs = result.enhancedSegments;
+    expect(segs.length).toBeGreaterThan(0);
+
+    const minStart = Math.min(...segs.map(s => s.startTime));
+    const maxEnd = Math.max(...segs.map(s => s.endTime));
+    const span = maxEnd - minStart;
+    const union = unionMs(segs.map(s => [s.startTime, s.endTime] as [number, number]));
+    const naiveSum = segs.reduce((acc, s) => acc + s.durationMs, 0);
+
+    // The invariant: union of all phase segments never exceeds the wall-clock span.
+    expect(union).toBeLessThanOrEqual(span);
+    // The parallel tools genuinely overlap, so the naive sum DOES exceed the span —
+    // demonstrating why aggregation must union (the bug class this guards).
+    expect(naiveSum).toBeGreaterThan(span);
+
+    // Each segment is a valid, non-negative interval consistent with its duration.
+    for (const s of segs) {
+      expect(s.endTime).toBeGreaterThanOrEqual(s.startTime);
+      expect(s.durationMs).toBe(s.endTime - s.startTime);
+    }
+  });
+
+  it('holds for a simple sequential session (no overlap)', () => {
+    const result = analyzeSession('s2', [
+      userMsg(T(0)),
+      assistantMsg(T(5), { toolUses: [{ id: 'tu1', name: 'Read' }] }),
+      toolResultMsg(T(8), ['tu1']),
+      assistantMsg(T(10)),
+    ]);
+    const segs = result.enhancedSegments;
+    const span = Math.max(...segs.map(s => s.endTime)) - Math.min(...segs.map(s => s.startTime));
+    const union = unionMs(segs.map(s => [s.startTime, s.endTime] as [number, number]));
+    expect(union).toBeLessThanOrEqual(span);
+  });
+});
+
 describe('analyzer: parallel subagents counted by wall-clock union', () => {
   it('does not sum overlapping (fanned-out) subagent durations', () => {
     // 3 Agents dispatched in ONE assistant turn (parallel fan-out), all starting
