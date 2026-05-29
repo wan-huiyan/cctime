@@ -277,7 +277,7 @@ function detectEnhancedPhases(messages: SessionMessage[]): EnhancedTimeSegment[]
 }
 
 /** Wall-clock union (ms) of possibly-overlapping [start, end] spans. */
-function unionMs(spans: Array<[number, number]>): number {
+export function unionMs(spans: Array<[number, number]>): number {
   if (spans.length === 0) return 0;
   const sorted = [...spans].sort((a, b) => a[0] - b[0]);
   let total = 0;
