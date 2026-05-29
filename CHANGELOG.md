@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Token dedup: fall back to `message.id` when `requestId` is absent.** Streaming
+  assistant chunks share a `requestId` and `deduplicateAssistant` collapses them so
+  their (identical) usage is counted once — without it, tokens inflate ~2-3×. But
+  assistant rows that *omit* `requestId` (older Claude Code versions / partial logs)
+  bypassed the grouping entirely and re-introduced that inflation. They still share
+  `message.id`, so dedup now keys on `requestId ?? message.id`. Rows with neither key
+  pass through unchanged.
 - **Time breakdown: cap "Claude thinking" gaps so mid-turn suspensions aren't counted as thinking.**
   Previously only the assistant-end→user gap was capped by `IDLE_THRESHOLD_MS`; the
   user→assistant and tool_result→assistant gaps (both attributed to `claudeThink`) were
