@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Time breakdown: cap "Claude thinking" gaps so mid-turn suspensions aren't counted as thinking.**
+  Previously only the assistant-end→user gap was capped by `IDLE_THRESHOLD_MS`; the
+  user→assistant and tool_result→assistant gaps (both attributed to `claudeThink`) were
+  uncapped. So any long pause that landed *mid-turn* — an overnight gap after a tool result,
+  a credit stall, a remote-control handoff — was reported as hours of "Claude thinking."
+  These gaps are now capped at `THINK_CAP_MS` (10 min); the remainder is booked as `humanAway`.
+  On a real 16 h session with overnight gaps this moved ~9 h out of "thinking"
+  (11 h 34 m → 2 h 35 m) into away time, where it belongs.
 - **Time Breakdown: count parallel subagents/tools by wall-clock union, not sum.**
   `computeEnhancedStats` emitted one segment per tool/agent and summed them, so
   tools and subagents fanned out in a single assistant turn (e.g. a panel of

@@ -6,6 +6,14 @@ import type {
 import { estimateCost } from './pricing.js';
 
 const IDLE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+// A single uninterrupted model response effectively never exceeds this. A longer
+// gap before an assistant message means the session was SUSPENDED mid-turn
+// (overnight pause, credit stall, remote-control handoff) — not the model
+// "thinking" for hours. We cap the thinking slice at this and attribute the
+// remainder to humanAway, so long-pause sessions aren't reported as huge
+// "Claude thinking" time. (Only the assistant-end→user gap was capped before;
+// the user→assistant and tool_result→assistant gaps were not.)
+const THINK_CAP_MS = 10 * 60 * 1000; // 10 minutes
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
 
 export function analyzeSession(sessionId: string, messages: SessionMessage[]): SessionAnalysis {
@@ -176,6 +184,18 @@ function detectEnhancedPhases(messages: SessionMessage[]): EnhancedTimeSegment[]
     segments.push({ phase, startTime: start, endTime: end, durationMs: end - start, toolName });
   }
 
+  // Emit a "Claude thinking" (or planning) slice, capped at THINK_CAP_MS. Any
+  // excess is a mid-turn suspension, not thinking, so it's booked as humanAway.
+  function emitThink(start: number, end: number) {
+    const phase: EnhancedPhaseType = planModeActive ? 'planning' : 'claudeThink';
+    if (end - start <= THINK_CAP_MS) {
+      emit(phase, start, end);
+    } else {
+      emit(phase, start, start + THINK_CAP_MS);
+      emit('humanAway', start + THINK_CAP_MS, end);
+    }
+  }
+
   for (const msg of messages) {
     const ts = Date.parse(msg.timestamp);
     if (isNaN(ts)) continue;
@@ -225,14 +245,12 @@ function detectEnhancedPhases(messages: SessionMessage[]): EnhancedTimeSegment[]
 
       // Gap from last external user message → this assistant = Claude thinking (first response)
       if (lastExternalUserTs !== null) {
-        const phase: EnhancedPhaseType = planModeActive ? 'planning' : 'claudeThink';
-        emit(phase, lastExternalUserTs, ts);
+        emitThink(lastExternalUserTs, ts);
         lastExternalUserTs = null;
       }
       // Gap from last tool_result → this assistant = Claude thinking (mid-turn, processing results)
       else if (lastToolResultTs !== null) {
-        const phase: EnhancedPhaseType = planModeActive ? 'planning' : 'claudeThink';
-        emit(phase, lastToolResultTs, ts);
+        emitThink(lastToolResultTs, ts);
       }
 
       lastAssistantEndTs = ts;
