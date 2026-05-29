@@ -460,3 +460,11 @@ describe('formatSession: parallel-subagent benefit insight', () => {
     expect(output).not.toContain('Parallel subagents');
   });
 });
+
+describe('formatSession: cost-per-minute is labeled as active-minutes', () => {
+  it('labels the rate /active-min (costPerMinuteUsd is cost ÷ active time, not wall-clock)', () => {
+    const output = strip(formatSession(makeAnalysis({ costPerMinuteUsd: 2.38 })));
+    expect(output).toContain('$2.38/active-min');
+    expect(output).not.toMatch(/\$[\d.]+\/min\b/);  // no bare "/min"
+  });
+});

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Label the cost rate `/active-min`** (was a bare `/min`). `costPerMinuteUsd` is
+  cost ÷ *active* compute time (`duration − humanAway`), not wall-clock — the bare
+  `/min` read as ambiguous. Display-only.
+
 ### Added
 
 - **Parallel-subagent benefit insight.** The subagent phase is aggregated by wall-clock

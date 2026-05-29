@@ -172,7 +172,7 @@ export function formatSession(analysis: SessionAnalysis): string {
   }
   const cachePct = Math.round(analysis.cacheHitRate * 100);
   lines.push(` Cache   ${renderCacheBar(analysis.cacheHitRate)}  ${cachePct}% hit`);
-  lines.push(` Cost    ~${formatCost(analysis.estimatedCostUsd)}  (${formatCost(analysis.costPerMinuteUsd)}/min)   Avg response: ${formatLatency(analysis.avgResponseMs)}   Turns: ${analysis.turnCount}`);
+  lines.push(` Cost    ~${formatCost(analysis.estimatedCostUsd)}  (${formatCost(analysis.costPerMinuteUsd)}/active-min)   Avg response: ${formatLatency(analysis.avgResponseMs)}   Turns: ${analysis.turnCount}`);
 
   // Models
   const modelEntries = Object.entries(analysis.models).sort((a, b) => b[1] - a[1]);
@@ -275,7 +275,7 @@ export function formatSessionLive(analysis: SessionAnalysis): string {
   }
   const liveCachePct = Math.round(analysis.cacheHitRate * 100);
   lines.push(` Cache   ${renderCacheBar(analysis.cacheHitRate)}  ${liveCachePct}% hit`);
-  lines.push(` Cost    ~${formatCost(analysis.estimatedCostUsd)}  (${formatCost(analysis.costPerMinuteUsd)}/min)   Avg response: ${formatLatency(analysis.avgResponseMs)}   Turns: ${analysis.turnCount}`);
+  lines.push(` Cost    ~${formatCost(analysis.estimatedCostUsd)}  (${formatCost(analysis.costPerMinuteUsd)}/active-min)   Avg response: ${formatLatency(analysis.avgResponseMs)}   Turns: ${analysis.turnCount}`);
 
   // Tools (compact for live mode)
   const liveToolEntries = Object.entries(analysis.tools).sort((a, b) => b[1] - a[1]);
