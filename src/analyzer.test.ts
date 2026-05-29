@@ -517,3 +517,95 @@ describe('analyzer: segment-union ≤ wall-clock invariant', () => {
     expect(union).toBeLessThanOrEqual(span);
   });
 });
+
+describe('analyzer: parallel subagents counted by wall-clock union', () => {
+  it('does not sum overlapping (fanned-out) subagent durations', () => {
+    // 3 Agents dispatched in ONE assistant turn (parallel fan-out), all starting
+    // at 00:00:10, returning staggered at +60s / +120s / +180s.
+    // Per-agent durations sum to 360s; true wall-clock elapsed is 180s.
+    const messages: SessionMessage[] = [
+      userMsg('2026-01-01T00:00:00Z', 'go'),
+      assistantMsg('2026-01-01T00:00:10Z', {
+        toolUses: [
+          { id: 'a1', name: 'Agent' },
+          { id: 'a2', name: 'Agent' },
+          { id: 'a3', name: 'Agent' },
+        ],
+      }),
+      toolResultMsg('2026-01-01T00:01:10Z', ['a1']),
+      toolResultMsg('2026-01-01T00:02:10Z', ['a2']),
+      toolResultMsg('2026-01-01T00:03:10Z', ['a3']),
+      assistantMsg('2026-01-01T00:03:20Z'),
+    ];
+    const a = analyzeSession('s', messages);
+    expect(a.enhancedStats.subagent).toBe(180_000); // union, NOT 360_000 sum
+    expect(a.enhancedStats.toolExec).toBe(0);
+  });
+
+  it('does not sum overlapping parallel non-agent tool calls either', () => {
+    // 2 Bash calls in one turn, overlapping: spans 60s + 120s (sum 180s), union 120s.
+    const messages: SessionMessage[] = [
+      userMsg('2026-01-01T00:00:00Z', 'go'),
+      assistantMsg('2026-01-01T00:00:10Z', {
+        toolUses: [
+          { id: 'b1', name: 'Bash' },
+          { id: 'b2', name: 'Bash' },
+        ],
+      }),
+      toolResultMsg('2026-01-01T00:01:10Z', ['b1']),
+      toolResultMsg('2026-01-01T00:02:10Z', ['b2']),
+      assistantMsg('2026-01-01T00:02:20Z'),
+    ];
+    const a = analyzeSession('s', messages);
+    expect(a.enhancedStats.toolExec).toBe(120_000); // union, NOT 180_000 sum
+    expect(a.enhancedStats.subagent).toBe(0);
+  });
+
+  it('sequential subagents still add up (no spurious union collapse)', () => {
+    // Two NON-overlapping agents: 60s then 60s = 120s union == 120s sum.
+    const messages: SessionMessage[] = [
+      userMsg('2026-01-01T00:00:00Z', 'go'),
+      assistantMsg('2026-01-01T00:00:10Z', { toolUses: [{ id: 'a1', name: 'Agent' }] }),
+      toolResultMsg('2026-01-01T00:01:10Z', ['a1']),
+      assistantMsg('2026-01-01T00:01:20Z', { toolUses: [{ id: 'a2', name: 'Agent' }] }),
+      toolResultMsg('2026-01-01T00:02:20Z', ['a2']),
+      assistantMsg('2026-01-01T00:02:30Z'),
+    ];
+    const a = analyzeSession('s', messages);
+    expect(a.enhancedStats.subagent).toBe(120_000);
+  });
+});
+
+describe('analyzer: thinking gaps are capped (mid-turn suspension ≠ thinking)', () => {
+  const CAP = 10 * 60 * 1000; // THINK_CAP_MS
+
+  it('caps a long tool_result→assistant gap: 10min think + remainder humanAway', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:00:02Z', { toolUses: [{ id: 'tu1', name: 'Bash' }] }),
+      toolResultMsg('2026-01-01T00:00:12Z', ['tu1']),
+      assistantMsg('2026-01-01T02:00:12Z'), // 2h gap after the tool result (session suspended)
+    ]);
+    // 2s legit first-response think (user→assistant) + 10min cap on the suspended gap
+    expect(result.enhancedStats.claudeThink).toBe(2000 + CAP);
+    expect(result.enhancedStats.humanAway).toBe(2 * 60 * 60 * 1000 - CAP); // 1h50m booked as away
+  });
+
+  it('caps a long user→assistant first-response gap the same way', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T03:00:00Z'), // 3h before first response (suspended)
+    ]);
+    expect(result.enhancedStats.claudeThink).toBe(CAP);
+    expect(result.enhancedStats.humanAway).toBe(3 * 60 * 60 * 1000 - CAP);
+  });
+
+  it('leaves a normal short think gap untouched (no spurious humanAway)', () => {
+    const result = analyzeSession('s1', [
+      userMsg('2026-01-01T00:00:00Z'),
+      assistantMsg('2026-01-01T00:05:00Z'), // 5min < cap
+    ]);
+    expect(result.enhancedStats.claudeThink).toBe(5 * 60 * 1000);
+    expect(result.enhancedStats.humanAway).toBe(0);
+  });
+});

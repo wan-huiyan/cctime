@@ -168,6 +168,23 @@ npm run test:watch # Test watch mode
 
 </details>
 
+## Contributing upstream (this fork's workflow)
+
+This is a fork of [`dioptx/cctime`](https://github.com/dioptx/cctime). To send a fix upstream:
+
+1. **One dedicated branch per fix**, cut from `main` — e.g. `fix/<thing>`. Keep it focused so the upstream diff is self-contained.
+2. Verify before opening: `npx tsc --noEmit` clean **and** `npm test` green (tests are co-located `*.test.ts`); no new runtime deps beyond `chalk`/`commander`.
+3. Open the PR **from this fork's branch → `dioptx:main`** (`gh pr create --repo dioptx/cctime --base main --head <you>:<branch>`).
+4. Add a `CHANGELOG.md` entry under `## [Unreleased]`. Parallel PRs will each touch this section, so expect a trivial CHANGELOG rebase once one of them merges.
+
+### ⚠️ Don't `--delete-branch` a head that an upstream PR points at
+
+Deleting a branch **closes every PR that uses it as head — across forks**. If branch `fix/foo` is the head of an upstream PR *and* you merge a fork-internal PR on the same branch with `--delete-branch`, the upstream PR is closed too (it reads as "closed", not merged).
+
+- Give upstream-contribution branches a **dedicated name** and don't reuse them for fork-internal merges.
+- When merging a fork-internal copy, merge **without** `--delete-branch` (or use a separate branch), until the upstream PR is merged/closed.
+- Recovery if it happens: the commit usually survives in a local clone's stale `refs/remotes/origin/<branch>` ref — `git push origin <sha>:refs/heads/<branch>` to restore it, then reopen the PR.
+
 ## License
 
 [MIT](LICENSE)
