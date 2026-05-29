@@ -137,6 +137,21 @@ export interface SessionAnalysis {
   contextTrend: number[];
   stuckLoops: StuckLoop[];
   warmupCost: WarmupCost;
+  // Token/cost of this session's subagent transcripts (foreground Agent dispatches +
+  // nested Workflow-tool fan-outs). The main analysis counts only non-sidechain
+  // main-loop assistant messages, so subagent spend is otherwise uncounted. Optional:
+  // present only when a session dir + subagent files were resolved (the --session path).
+  subagents?: SubagentStats;
+}
+
+export interface SubagentStats {
+  count: number;          // number of agent-*.jsonl transcripts found
+  workflowCount: number;  // how many of those were nested under subagents/workflows/
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheCreation: number;
+  costUsd: number;
 }
 
 export interface SessionIndexEntry {

@@ -6,6 +6,7 @@ import { program } from 'commander';
 import { getLastSession, getAllSessions, getCurrentSessionId, getTodaySessions, getWeekSessions, getMonthSessions, getSessionsSince, getSessionById } from './finder.js';
 import { parseSession } from './parser.js';
 import { analyzeSession } from './analyzer.js';
+import { aggregateSubagents } from './subagents.js';
 import { formatSession, formatAggregate, formatCompact, formatCsv, formatMarkdown, formatJsonAggregate } from './formatter.js';
 import { startLiveMode, startAggregateLiveMode } from './live.js';
 import type { SessionIndexEntry, SessionAnalysis } from './types.js';
@@ -19,6 +20,9 @@ async function analyzeEntry(entry: SessionIndexEntry): Promise<SessionAnalysis> 
   if (analysis.summary === 'Untitled session' && entry.summary) {
     analysis.summary = entry.summary;
   }
+  // Add subagent token/cost (analyzeSession counts main-loop only). Recurses into
+  // subagents/workflows/ so Workflow-tool fan-outs are not silently dropped.
+  analysis.subagents = await aggregateSubagents(entry.fullPath);
   return analysis;
 }
 
