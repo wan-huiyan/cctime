@@ -7,17 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Parallel-subagent benefit insight.** The subagent phase is aggregated by wall-clock
+  union (overlapping fan-out isn't double-counted), but the *sum* of agent durations still
+  carries signal: `sum − union` = time saved by running them concurrently, `sum / union` =
+  effective concurrency. Adds an Insights line — e.g. `⚡ Parallel subagents: 5 ran in 38m
+  wall (53m of work · 1.4× concurrent · saved 15m vs sequential)` — shown only when ≥2
+  subagents actually overlapped, so sequential sessions get no spurious line.
+
+- **Token breakdown: decompose the "in" headline into fresh vs cached.** The headline
+  "NN in" is dominated by cheap `cache_read` tokens; a new `Input  X new · Y cached`
+  line separates freshly-billed input (`input + cache_creation`) from cache reads, so the
+  cost line is interpretable (a big "in" at 97% cache is mostly $1.50/M reads, not $15/M
+  fresh input). Applied to the single-session and live views.
+
 ### Fixed
 
+- **Token dedup: fall back to `message.id` when `requestId` is absent.** Streaming
+  assistant chunks share a `requestId` and `deduplicateAssistant` collapses them so
+  their (identical) usage is counted once — without it, tokens inflate ~2-3×. But
+  assistant rows that *omit* `requestId` (older Claude Code versions / partial logs)
+  bypassed the grouping entirely and re-introduced that inflation. They still share
+  `message.id`, so dedup now keys on `requestId ?? message.id`. Rows with neither key
+  pass through unchanged.
+- **Time breakdown: cap "Claude thinking" gaps so mid-turn suspensions aren't counted as thinking.**
+  Previously only the assistant-end→user gap was capped by `IDLE_THRESHOLD_MS`; the
+  user→assistant and tool_result→assistant gaps (both attributed to `claudeThink`) were
+  uncapped. So any long pause that landed *mid-turn* — an overnight gap after a tool result,
+  a credit stall, a remote-control handoff — was reported as hours of "Claude thinking."
+  These gaps are now capped at `THINK_CAP_MS` (10 min); the remainder is booked as `humanAway`.
+  On a real 16 h session with overnight gaps this moved ~9 h out of "thinking"
+  (11 h 34 m → 2 h 35 m) into away time, where it belongs.
+- **Time Breakdown: count parallel subagents/tools by wall-clock union, not sum.**
+  `computeEnhancedStats` emitted one segment per tool/agent and summed them, so
+  tools and subagents fanned out in a single assistant turn (e.g. a panel of
+  review subagents) were double-counted. The `Subagents` and `Tool execution`
+  bars are now aggregated by wall-clock interval union (subagent wins on
+  cross-kind overlap), so they reflect real elapsed time and the active-time
+  percentages stay a true partition that sums to <=100% (previously could read
+  e.g. 109%). On a fan-out-heavy session this dropped reported subagent time from
+  ~53m (sum of 19 overlapping agents) to ~38m (true elapsed).
 - **Default to the *current* session, not "most recently modified file".** Run with no
   args, `cctime` now resolves `CLAUDE_CODE_SESSION_ID` (which Claude Code exports to
   subprocesses) via the authoritative by-id lookup, so it reports the session you're
   actually in — previously it picked whichever session's JSONL was written last, which
-  loses to any concurrently-active session (and silently showed the wrong one). The by-id
-  path also skips the `messageCount>2` "main session" filter, which could drop an active
-  session whose cached index count is stale. When not running inside Claude Code and ≥2
-  sessions were active in the last 5 min, it now prints which one it chose + a `--session`
-  hint instead of choosing silently.
+  loses to any concurrently-active session. The by-id path also skips the `messageCount>2`
+  "main session" filter, which could drop an active session whose cached index count is
+  stale. When not running inside Claude Code and ≥2 sessions were active in the last 5 min,
+  it prints which one it chose + a `--session` hint instead of choosing silently.
 
 ## [1.0.0] - 2026-02-18
 

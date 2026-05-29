@@ -413,3 +413,50 @@ describe('formatter: insights', () => {
     expect(output).toContain('Warmup overhead');
   });
 });
+
+describe('formatSession: input decomposed into fresh vs cached', () => {
+  it('shows freshly-billed input (input + cache writes) and cache reads separately', () => {
+    // input 5K + cacheCreation 10K = 15K fresh; cacheRead 50K cached.
+    const output = strip(formatSession(makeAnalysis()));
+    expect(output).toContain('Input');
+    expect(output).toContain('15.0K new');
+    expect(output).toContain('50.0K cached');
+  });
+
+  it('the headline "in" remains the full context total (fresh + cached)', () => {
+    // input+cacheRead+cacheCreation = 65K — the line a user sees as scale.
+    const output = strip(formatSession(makeAnalysis()));
+    expect(output).toContain('65.0K in');
+  });
+});
+
+describe('formatSession: parallel-subagent benefit insight', () => {
+  const seg = (start: number, end: number) => ({
+    phase: 'subagent' as const, startTime: start, endTime: end, durationMs: end - start,
+  });
+
+  it('shows concurrency + time saved when subagents overlapped', () => {
+    // Two agents in one fan-out: [0,180s] and [0,120s] → sum 300s, wall(union) 180s, saved 120s.
+    const output = strip(formatSession(makeAnalysis({
+      enhancedSegments: [seg(0, 180_000), seg(0, 120_000)],
+    })));
+    expect(output).toContain('Parallel subagents');
+    expect(output).toMatch(/2 ran in 3m wall/);
+    expect(output).toMatch(/saved 2m vs sequential/);
+  });
+
+  it('shows nothing for a single subagent (no overlap to report)', () => {
+    const output = strip(formatSession(makeAnalysis({
+      enhancedSegments: [seg(0, 180_000)],
+    })));
+    expect(output).not.toContain('Parallel subagents');
+  });
+
+  it('shows nothing when subagents ran sequentially (no time saved)', () => {
+    // [0,60s] then [60s,120s] — adjacent, no overlap → sum == union, nothing saved.
+    const output = strip(formatSession(makeAnalysis({
+      enhancedSegments: [seg(0, 60_000), seg(60_000, 120_000)],
+    })));
+    expect(output).not.toContain('Parallel subagents');
+  });
+});
