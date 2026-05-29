@@ -173,6 +173,12 @@ export function formatSession(analysis: SessionAnalysis): string {
   const cachePct = Math.round(analysis.cacheHitRate * 100);
   lines.push(` Cache   ${renderCacheBar(analysis.cacheHitRate)}  ${cachePct}% hit`);
   lines.push(` Cost    ~${formatCost(analysis.estimatedCostUsd)}  (${formatCost(analysis.costPerMinuteUsd)}/active-min)   Avg response: ${formatLatency(analysis.avgResponseMs)}   Turns: ${analysis.turnCount}`);
+  if (analysis.subagents && analysis.subagents.count > 0) {
+    const sa = analysis.subagents;
+    const grand = analysis.estimatedCostUsd + sa.costUsd;
+    const wf = sa.workflowCount > 0 ? `, ${sa.workflowCount} workflow` : '';
+    lines.push(` Subagents ~${formatCost(sa.costUsd)} across ${sa.count} transcripts${wf}  ·  grand total ~${formatCost(grand)}`);
+  }
 
   // Models
   const modelEntries = Object.entries(analysis.models).sort((a, b) => b[1] - a[1]);
@@ -276,6 +282,12 @@ export function formatSessionLive(analysis: SessionAnalysis): string {
   const liveCachePct = Math.round(analysis.cacheHitRate * 100);
   lines.push(` Cache   ${renderCacheBar(analysis.cacheHitRate)}  ${liveCachePct}% hit`);
   lines.push(` Cost    ~${formatCost(analysis.estimatedCostUsd)}  (${formatCost(analysis.costPerMinuteUsd)}/active-min)   Avg response: ${formatLatency(analysis.avgResponseMs)}   Turns: ${analysis.turnCount}`);
+  if (analysis.subagents && analysis.subagents.count > 0) {
+    const sa = analysis.subagents;
+    const grand = analysis.estimatedCostUsd + sa.costUsd;
+    const wf = sa.workflowCount > 0 ? `, ${sa.workflowCount} workflow` : '';
+    lines.push(` Subagents ~${formatCost(sa.costUsd)} across ${sa.count} transcripts${wf}  ·  grand total ~${formatCost(grand)}`);
+  }
 
   // Tools (compact for live mode)
   const liveToolEntries = Object.entries(analysis.tools).sort((a, b) => b[1] - a[1]);
